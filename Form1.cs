@@ -105,14 +105,14 @@ namespace WebBruteForcer
         }
         private void InitBruteForcer()
         {            
-            tsUrlText.Text = "http://server/[payload]";
+            tsUrlText.Text = "https://yoire.com/[payload]";
             LoadConfig();
             update_available_dictionaries();
             load_dictionary(this.dictionary);
         }
 
         private void load_dictionary(string filename)
-        {
+        {            
             if (!File.Exists(filename))
             {
                 MessageBox.Show("Can't open file " + filename, "Load Dictionary", MessageBoxButtons.OK, MessageBoxIcon.Information);
@@ -184,6 +184,9 @@ namespace WebBruteForcer
                 ToolStripItem ts_item = tsDictMenu.DropDownItems.Add(Path.GetFileName(filename));
                 ts_item.Tag = filename;
                 ts_item.Click += dictionary_clicked;
+
+                if (this.dictionary == null && filename.Contains("wordlist"))
+                    this.dictionary = filename; // set default
             }
         }
 
