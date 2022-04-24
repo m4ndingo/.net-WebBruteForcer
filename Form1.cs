@@ -107,7 +107,13 @@ namespace WebBruteForcer
         {            
             tsUrlText.Text = "https://yoire.com/[payload]";
             LoadConfig();
-            update_available_dictionaries();
+            if(!update_available_dictionaries())
+            {
+                this.dictionaries_folder = Directory.GetCurrentDirectory() + @"\dictionaries";
+                this.dictionary = this.dictionaries_folder + @"\wordlist.txt";
+                update_available_dictionaries();
+            }
+
             load_dictionary(this.dictionary);
         }
 
@@ -171,11 +177,11 @@ namespace WebBruteForcer
             }
         }
 
-        private void update_available_dictionaries()
+        private bool update_available_dictionaries()
         {
             string dictionaries_path = getDictionariesPath();
             if (!Directory.Exists(dictionaries_path))
-                return;
+                return false;
             tsDictMenu.DropDownItems.Clear();
             string[] fileEntries = Directory.GetFiles(dictionaries_path);
             foreach (string filename in fileEntries)
@@ -183,10 +189,8 @@ namespace WebBruteForcer
                 ToolStripItem ts_item = tsDictMenu.DropDownItems.Add(Path.GetFileName(filename));
                 ts_item.Tag = filename;
                 ts_item.Click += dictionary_clicked;
-
-                if (this.dictionary == null && filename.Contains("wordlist"))
-                    this.dictionary = filename; // set default
             }
+            return true;
         }
 
         private string getDictionariesPath()
@@ -490,6 +494,10 @@ namespace WebBruteForcer
         }
 
         private void selectDictionariesFolderToolStripMenuItem_Click(object sender, EventArgs e)
+        {
+            SelectDictionariesFolder();
+        }
+        private void SelectDictionariesFolder()
         {
             folderBrowserDialog1.SelectedPath = Directory.GetCurrentDirectory();
             folderBrowserDialog1.ShowDialog();
