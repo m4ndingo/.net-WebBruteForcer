@@ -1,2 +1,4 @@
 # .net-WebBruteForcer
 Simple .net Web BruteForcer for pentesting purpouses
+## Screnshots
+![v1.0](https://github.com/m4ndingo/.net-WebBruteForcer/blob/main/screenshots/main_v1.0.png)
