@@ -504,7 +504,8 @@ namespace WebBruteForcer
             folderBrowserDialog1.SelectedPath = Directory.GetCurrentDirectory();
             folderBrowserDialog1.ShowDialog();
             this.dictionaries_folder = folderBrowserDialog1.SelectedPath;
-            update_available_dictionaries();
+            if (update_available_dictionaries())
+                load_dictionary(this.dictionary);
         }
 
         private void newWindowToolStripMenuItem_Click(object sender, EventArgs e)
