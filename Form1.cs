@@ -189,6 +189,8 @@ namespace WebBruteForcer
                 ToolStripItem ts_item = tsDictMenu.DropDownItems.Add(Path.GetFileName(filename));
                 ts_item.Tag = filename;
                 ts_item.Click += dictionary_clicked;
+                if (!File.Exists(this.dictionary) && filename.Contains("wordlist"))  // set default dict
+                    this.dictionary = filename;
             }
             return true;
         }
