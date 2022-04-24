@@ -147,8 +147,7 @@ namespace WebBruteForcer
             }
             Text = string.Format("{0} - WL {1} - Method {2} - Workers {3} - BF {4} {5}",
                 this.title, Path.GetFileName(this.dictionary), this.method, msg, bruteforce_running ? "Running" : "Stopped", last);
-            //splitContainer1.Panel2Collapsed = !this.method.Equals("POST");
-            if(/*splitContainer1.Panel2Collapsed || */tsLowPanelInfoButton.Text.Equals("PANELINFO"))
+            if(tsLowPanelInfoButton.Text.Equals("PANELINFO"))
             {
                 if(this.method.Equals("POST"))
                     show_panel_info("Post Data");
