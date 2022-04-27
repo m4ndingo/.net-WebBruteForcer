@@ -36,6 +36,9 @@
     <ApplicationIcon>sample.ico</ApplicationIcon>
   </PropertyGroup>
   <ItemGroup>
+    <Reference Include="Newtonsoft.Json, Version=13.0.0.0, Culture=neutral, PublicKeyToken=30ad4fe6b2a6aeed, processorArchitecture=MSIL">
+      <HintPath>..\packages\Newtonsoft.Json.13.0.1\lib\net45\Newtonsoft.Json.dll</HintPath>
+    </Reference>
     <Reference Include="System" />
     <Reference Include="System.Core" />
     <Reference Include="System.Xml.Linq" />
@@ -57,6 +60,18 @@
     </Compile>
     <Compile Include="Program.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
+    <Compile Include="workerControl.cs">
+      <SubType>UserControl</SubType>
+    </Compile>
+    <Compile Include="workerControl.Designer.cs">
+      <DependentUpon>workerControl.cs</DependentUpon>
+    </Compile>
+    <Compile Include="WorkersPanelControl.cs">
+      <SubType>UserControl</SubType>
+    </Compile>
+    <Compile Include="WorkersPanelControl.Designer.cs">
+      <DependentUpon>WorkersPanelControl.cs</DependentUpon>
+    </Compile>
     <EmbeddedResource Include="Form1.resx">
       <DependentUpon>Form1.cs</DependentUpon>
     </EmbeddedResource>
@@ -68,7 +83,15 @@
     <Compile Include="Properties\Resources.Designer.cs">
       <AutoGen>True</AutoGen>
       <DependentUpon>Resources.resx</DependentUpon>
+      <DesignTime>True</DesignTime>
     </Compile>
+    <EmbeddedResource Include="workerControl.resx">
+      <DependentUpon>workerControl.cs</DependentUpon>
+    </EmbeddedResource>
+    <EmbeddedResource Include="WorkersPanelControl.resx">
+      <DependentUpon>WorkersPanelControl.cs</DependentUpon>
+    </EmbeddedResource>
+    <None Include="packages.config" />
     <None Include="Properties\Settings.settings">
       <Generator>SettingsSingleFileGenerator</Generator>
       <LastGenOutput>Settings.Designer.cs</LastGenOutput>
@@ -83,6 +106,8 @@
     <None Include="App.config" />
   </ItemGroup>
   <ItemGroup>
+    <Content Include="changelog.txt" />
+    <None Include="img\sphere_gray_30x30.png" />
     <Content Include="sample.ico" />
   </ItemGroup>
   <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
