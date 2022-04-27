@@ -10,9 +10,9 @@ Simple .net Web BruteForcer for education and pentesting purposes
 	- Newtonsoft JSON library added
 	- Now, each scan creates the "logs" folder if not exists
 	- And for each hostname bruteforced, the following files are created:
-		- <hostname>-bf_results.txt   # log in plain text
-		- <hostname>-bf_results.json  # log in json format
-		- <hostname>-bf_config.json   # bruteforce configuration 
+		- &lt;hostname>-bf_results.txt   # log in plain text
+		- &lt;hostname>-bf_results.json  # log in json format
+		- &lt;hostname>-bf_config.json   # bruteforce configuration 
 - Fixed function download_url_noSSL (was incomplete)
 - Moved "method" options to main menu
 - Added option to open current dictionary file in text editor
