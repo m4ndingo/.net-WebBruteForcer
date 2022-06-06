@@ -1,5 +1,4 @@
 ﻿using Microsoft.Win32;
-using Microsoft.Win32;
 using Newtonsoft.Json;
 using System;
 using System.Collections.Generic;
@@ -26,6 +25,8 @@ namespace WebBruteForcer
 
         public Pool pool { get; private set; }
         public Workers workers { get; private set; }
+        public WorkersPanelControl workers_panel { get; private set; }
+        public List<string> debug { get; private set; }
         public bool bruteforce_running { get; private set; }
         public string url_to_bruteforce { get; private set; }
         public bool show404 { get; private set; }
@@ -34,12 +35,12 @@ namespace WebBruteForcer
         public string title { get; private set; }
         public string method { get; private set; }
         public string dictionaries_folder { get; private set; }
-        public List<string> debug { get; private set; }
         public string req_headers_to_send { get; private set; }
         public bool break_on_errors { get; private set; }
         public bool hide_lines_checked { get; private set; }
         public string hide_lines { get; private set; }
-        public WorkersPanelControl workers_panel { get; private set; }
+        public bool hide_bytes_checked { get; private set; }
+        public string hide_bytes { get; private set; }
 
         public void do_work(Worker worker)
         {
@@ -67,9 +68,10 @@ namespace WebBruteForcer
             if (worker.running || worker.avail || worker.payload == null) return;
             if (worker.error != null)
             {
+                Debug(worker.error.Message+Environment.NewLine+worker.error.StackTrace);
                 if (break_on_errors == false) return;
                 Console.WriteLine(worker.error.ToString());
-                if (worker.error.ErrorCode.Equals(11001))
+                if (worker.error != null) 
                 {
                     if (this.bruteforce_running)
                     {
@@ -79,16 +81,18 @@ namespace WebBruteForcer
                             "Flush Work", MessageBoxButtons.OK, MessageBoxIcon.Information);
                     }
                 }
-                else
-                {
-                    throw worker.error;
-                }
                 return;
             }
             WorkerResults wr = analyze_results(worker);
             bool silent = wr.response_code != null && wr.response_code.Equals("404") && show404.Equals(false);
             int lines_count = wr.headers != null ? wr.headers.Count() : 0;
-            silent = this.hide_lines_checked && this.hide_lines!=null && this.hide_lines.Equals(lines_count.ToString()) ? true : silent;
+            int bytes_count = worker.result.Length;
+            List<string> hide_lines_list = this.hide_lines.Split(',').Select(hl => hl.Trim()).ToList();
+            List<string> hide_bytes_list = this.hide_bytes.Split(',').Select(hl => hl.Trim()).ToList();
+            silent = 
+                (this.hide_lines_checked && this.hide_lines != null && hide_lines_list.Any(hl => hl.Equals(lines_count.ToString()))) ||
+                (this.hide_bytes_checked && this.hide_bytes != null && hide_bytes_list.Any(hl => hl.Equals(bytes_count.ToString())))
+                ? true : silent;
             if (!silent)
             {
                 string headers_debug_line = wr.headers != null ? string.Join(" | ", wr.headers) : "";
@@ -100,7 +104,7 @@ namespace WebBruteForcer
                         worker.payload,
                         wr.first_line,
                         lines_count,
-                        wr.headers != null ? string.Join("", wr.headers).Length : 0,
+                        bytes_count,
                         wr.headers != null ? headers_debug_line : "",
                         Environment.NewLine));
                 write_to_log(wr);
@@ -151,12 +155,31 @@ namespace WebBruteForcer
 
             this.dictionary = filename;
 
-            tsRunButton.Text = "Bruteforce";
+            BruteForcer_State("Bruteforce");
 
             UpdateTitle();
             pool_count();
             Debug("Dictionary " + Path.GetFileName(filename) + " loaded");
             Debug(string.Join(" ", lines.Take(5)));
+        }
+
+        private void BruteForcer_State(string state)
+        {
+            switch (state)
+            {
+                case "Pause Bruteforce":
+                    tsBruteForcePlayButton.Image = imageList1.Images[1];
+                    tsStopBruteforcerButton.Enabled = true;
+                    break;
+                case "Resume Bruteforce":
+                    tsBruteForcePlayButton.Image = imageList1.Images[2];
+                    tsStopBruteforcerButton.Enabled = true;
+                    break;
+                case "Bruteforce":
+                    tsBruteForcePlayButton.Image = imageList1.Images[3];
+                    tsStopBruteforcerButton.Enabled = false;
+                    break;
+            }
         }
 
         private void UpdateTitle()
@@ -210,6 +233,7 @@ namespace WebBruteForcer
             {
                 ToolStripItem ts_item = tsDictMenu.DropDownItems.Add(Path.GetFileName(filename));
                 ts_item.Tag = filename;
+                ts_item.Image = imageList1.Images[0];
                 ts_item.Click += dictionary_clicked;
                 if (!File.Exists(this.dictionary) && filename.Contains("wordlist"))  // set default dict
                     this.dictionary = filename;
@@ -250,7 +274,7 @@ namespace WebBruteForcer
             if (pool_count().Equals(0))
                 load_dictionary(this.dictionary);
             bruteforce_running = true;
-            tsRunButton.Text = "Pause Bruteforce";
+            BruteForcer_State("Pause Bruteforce");            
             workers = new Workers(50, workers_panel);
             Debug("Total workers: " + workers.Count());
             UpdateTitle();
@@ -299,7 +323,7 @@ namespace WebBruteForcer
                 }
                 Application.DoEvents();
             } while (bruteforce_running);
-            tsRunButton.Text = pool_count() > 0 ? "Resume Bruteforce" : "Bruteforce";
+            BruteForcer_State(pool_count() > 0 ? "Resume Bruteforce" : "Bruteforce");            
             bruteforce_running = false;
             workers.updateControls();
             UpdateTitle();
@@ -357,27 +381,29 @@ namespace WebBruteForcer
             string send_headers = string.Join(Environment.NewLine, send_headers_list);            
 
             if (uri.Scheme.Equals("https"))
-                download_url_SSL(worker, uri, post_data, req_headers, send_headers);
+                download_url_SSL(worker, uri, post_data, send_headers);
             else
-                download_url_noSSL(worker, uri, post_data, req_headers, send_headers);
+                download_url_noSSL(worker, uri, post_data, send_headers);
 
         }
-        private void download_url_SSL(Worker worker, Uri url, string post_data, string req_headers, string send_headers)
+        private void download_url_SSL(Worker worker, Uri url, string post_data, string send_headers)
         {
             RemoteCertificateValidationCallback DefaultCertificateValidationCallback = (sender, certificate, chain, errors) => true;
             Socket ServerSocket = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
+            Stream ServerStream = null;
+            SslStream sslServerStream = null;
             try
             {
                 ServerSocket.Connect(url.Host, url.Port);
+                ServerStream = new NetworkStream(ServerSocket, false);
+                sslServerStream = new SslStream(ServerStream, false, DefaultCertificateValidationCallback);
+                sslServerStream.AuthenticateAsClient(url.Host, null, SslProtocols.Tls12, false);
             }
-            catch (SocketException se)
+            catch (Exception se)
             {
                 worker.error = se;
                 return;
             }
-            Stream ServerStream = new NetworkStream(ServerSocket, false);
-            var sslServerStream = new SslStream(ServerStream, false, DefaultCertificateValidationCallback);
-            sslServerStream.AuthenticateAsClient(url.Host, null, SslProtocols.Tls12, false);
             ServerStream = sslServerStream;
             ServerStream.ReadTimeout = (int)TimeSpan.FromSeconds(5).TotalMilliseconds;
             var writer = new StreamWriter(ServerStream, Encoding.ASCII, 8192, true);
@@ -401,7 +427,7 @@ namespace WebBruteForcer
                 {
                     break;
                 }
-                result = result.Concat(buffer.Take(readed).ToArray()).ToArray();
+                result = result.Concat(buffer.Take(readed)).ToArray();
                 if (result.Length > max_body_download_limit)
                     break;
             } while (true);
@@ -414,17 +440,13 @@ namespace WebBruteForcer
                 result = result.Skip(1).ToArray();
             worker.result = result;
         }
-        private void download_url_noSSL(Worker worker, Uri url, string post_data, string req_headers, string send_headers)
+        private void download_url_noSSL(Worker worker, Uri url, string post_data, string send_headers)
         {
             Socket ServerSocket = null;
             try
             {
-                IPHostEntry ipHostInfo = Dns.GetHostEntry(url.Host);
-                IPAddress ipAddress = ipHostInfo.AddressList[0];
-                IPEndPoint remoteEP = new IPEndPoint(ipAddress, url.Port);
-                ServerSocket = new Socket(ipAddress.AddressFamily,
-                    SocketType.Stream, ProtocolType.Tcp);
-                ServerSocket.Connect(remoteEP);
+                ServerSocket = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
+                ServerSocket.Connect(url.Host, url.Port);
             }
             catch (SocketException se)
             {
@@ -445,8 +467,7 @@ namespace WebBruteForcer
                 {
                     int bytesRec = ServerSocket.Receive(bytes);
                     if (bytesRec.Equals(0)) break;
-                    bytes = bytes.Take(bytesRec).ToArray();
-                    result = result.Concat(bytes).ToArray();
+                    result = result.Concat(bytes.Take(bytesRec)).ToArray();
                     if (result.Length > max_body_download_limit)
                         break;
                 }
@@ -459,6 +480,11 @@ namespace WebBruteForcer
 
         private void tsRunButton_Click(object sender, EventArgs e)
         {
+            BruteForceButtonClicked();
+        }
+
+        private void BruteForceButtonClicked()
+        { 
             url_to_bruteforce = tsUrlText.Text;
             post_data_to_send = rtbPostData.Text;
             req_headers_to_send = rtbHeaders.Text;
@@ -510,6 +536,8 @@ namespace WebBruteForcer
             data.show404 = this.show404;
             data.hide_lines = this.hide_lines;
             data.hide_lines_checked = this.hide_lines_checked;
+            data.hide_bytes = this.hide_bytes;
+            data.hide_bytes_checked = this.hide_bytes_checked;
             data.break_on_errors= this.break_on_errors;
             data.dictionaries_folder = this.dictionaries_folder;
             data.dictionary = this.dictionary;
@@ -533,6 +561,8 @@ namespace WebBruteForcer
             public bool break_on_errors;
             public bool hide_lines_checked;
             public string hide_lines;
+            public bool hide_bytes_checked;
+            public string hide_bytes;
             public string dictionaries_folder;
             public string dictionary;
             public string post_data_to_send;
@@ -547,7 +577,9 @@ namespace WebBruteForcer
             this.show404 = key.GetValue("show404") == null || key.GetValue("show404").Equals("True");
             this.break_on_errors = key.GetValue("break_on_errors") == null || key.GetValue("break_on_errors").Equals("True");
             this.hide_lines_checked = key.GetValue("hide_lines_checked") != null && key.GetValue("hide_lines_checked").Equals("True");
-            this.hide_lines = (string)key.GetValue("hide_lines");
+            this.hide_lines = key.GetValue("hide_lines") != null ? (string)key.GetValue("hide_lines") : "";
+            this.hide_bytes_checked = key.GetValue("hide_bytes_checked") != null && key.GetValue("hide_bytes_checked").Equals("True");
+            this.hide_bytes = key.GetValue("hide_bytes") != null ? (string)key.GetValue("hide_bytes") : "";
             this.dictionaries_folder = (string)key.GetValue("dictionaries_folder");
             this.dictionary = (string)key.GetValue("dictionary");
             this.post_data_to_send = (string)key.GetValue("post_data");
@@ -561,9 +593,12 @@ namespace WebBruteForcer
                 rtbHeaders.Text = this.req_headers_to_send;
             if (this.hide_lines != null)
                 tsHideLinesTextbox.Text = this.hide_lines;
+            if (this.hide_bytes != null)
+                tsHideBytesTextbox.Text = this.hide_bytes;
             show404ResponsesToolStripMenuItem.Checked = this.show404;
             breakOnErrorsToolStripMenuItem.Checked = this.break_on_errors;
             hideLinesToolStripMenuItem.Checked = this.hide_lines_checked;
+            hideResponsesWithBytesToolStripMenuItem.Checked = this.hide_bytes_checked;
             SetMethod(this.method);
         }
         private void SaveConfig()
@@ -574,11 +609,13 @@ namespace WebBruteForcer
             if (this.dictionaries_folder != null) key.SetValue("dictionaries_folder", this.dictionaries_folder);
             if (this.dictionary != null) key.SetValue("dictionary", this.dictionary);
             if (this.hide_lines != null) key.SetValue("hide_lines", this.hide_lines);
+            if (this.hide_bytes != null) key.SetValue("hide_bytes", this.hide_bytes);
             if (this.post_data_to_send != null) key.SetValue("post_data", this.post_data_to_send);
             if (this.req_headers_to_send != null) key.SetValue("req_headers", this.req_headers_to_send);
             key.SetValue("show404", this.show404);
             key.SetValue("break_on_errors", this.break_on_errors);
             key.SetValue("hide_lines_checked", this.hide_lines_checked);
+            key.SetValue("hide_bytes_checked", this.hide_bytes_checked);
         }
         private RegistryKey KeyConfig()
         {
@@ -682,7 +719,7 @@ namespace WebBruteForcer
 
         private void ResizeControls()
         {
-            int new_width = Width - tsUrlLabel.Width - tsMethodButton.Width - tsRunButton.Width - tsOptionsMenu.Width - tsDictMenu.Width - 50;
+            int new_width = Width - tsUrlLabel.Width - tsPasteButton.Width - tsMethodButton.Width - tsOptionsMenu.Width - tsDictMenu.Width - 50;
             tsUrlText.Width = new_width;
             ResizeWorkersPanel();
             Application.DoEvents();
@@ -745,6 +782,62 @@ namespace WebBruteForcer
             this.hide_lines = tsHideLinesTextbox.Text;
             SaveConfig();
         }
+
+        private void tsPasteButton_Click(object sender, EventArgs e)
+        {
+            tsUrlText.Text = Clipboard.GetText();
+        }
+
+        private void hideResponsesWithBytesToolStripMenuItem_Click(object sender, EventArgs e)
+        {
+            this.hide_bytes_checked = hideResponsesWithBytesToolStripMenuItem.Checked;
+            SaveConfig();
+        }
+
+        private void tsClearDebugButton_Click(object sender, EventArgs e)
+        {
+            rtbDebug.Clear();
+        }
+
+        private void toolStripButton1_Click(object sender, EventArgs e)
+        {
+            rtbResults.Clear();
+        }
+
+        private void tsHideBytesTexbox_TextChanged(object sender, EventArgs e)
+        {
+            this.hide_bytes = tsHideBytesTextbox.Text;
+            SaveConfig();
+        }
+
+        private void toolStripButton2_Click(object sender, EventArgs e)
+        {
+            BruteForceButtonClicked();
+        }
+
+        private void stopBruteforcerToolStripMenuItem_Click(object sender, EventArgs e)
+        {
+            StopBruteforcer();
+        }
+
+        private void StopBruteforcer()
+        {
+            if(!bruteforce_running) 
+                load_dictionary(this.dictionary);
+            bruteforce_running = false;
+        }
+
+        private void tsStopBruteforcerButton_Click(object sender, EventArgs e)
+        {
+            StopBruteforcer();
+        }
+
+        private void aboutToolStripMenuItem_Click(object sender, EventArgs e)
+        {
+            AboutFrm frm = new AboutFrm();
+            frm.SetTitle(this.title);
+            frm.ShowDialog();
+        }
     }
 
     public class WorkerResults
@@ -776,7 +869,7 @@ namespace WebBruteForcer
         public byte[] result { get; internal set; }
         public bool running { get { return thread != null && !thread.ThreadState.Equals(System.Threading.ThreadState.Stopped); } }
         public Thread thread { get; private set; }
-        public SocketException error { get; internal set; }
+        public Exception error { get; internal set; }
         public Uri uri { get; internal set; }
         public workerControl control { get; internal set; }
 

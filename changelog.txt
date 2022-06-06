@@ -1,8 +1,20 @@
-﻿v1.1
+﻿v1.2
+----
+- Added option to hide responses with a number of lines using a list (comma separated values). Example:
+	- 14    # hide responses with 14 lines
+	- 14,8  # hide responses with 14 or 8 lines
+- Fixed bug when resolving unnecessary IP addresses in the http connection
+- SocketException changed to Exception
+- Added "paste URL" button
+- Added some nice icons/images to the GUI :)
+- Moved "Bruteforce button" to right sidebar
+- Added "stop button" to right sidebar
+
+v1.1
 ----
 - Logging added
 	- Newtonsoft JSON library added
-	- Now, each scan creates the "logs" folder if bnot exists
+	- Now, each scan creates the "logs" folder if not exists
 	- And for each hostname bruteforced, the following files are created:
 		- <hostname>-bf_results.txt   # log in plain text
 		- <hostname>-bf_results.json  # log in json format
