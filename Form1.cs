@@ -1,5 +1,6 @@
 ﻿using Microsoft.Win32;
 using Newtonsoft.Json;
+using Newtonsoft.Json.Linq;
 using System;
 using System.Collections.Generic;
 using System.Data;
@@ -11,16 +12,22 @@ using System.Net.Security;
 using System.Net.Sockets;
 using System.Security.Authentication;
 using System.Text;
+using System.Text.RegularExpressions;
 using System.Threading;
 using System.Windows.Forms;
 
+/*
+ * Button to clear cookies, headers, etc.
+ * Show current speed mode icon
+ * popup menu text add "copy"
+ */
 namespace WebBruteForcer
 {
     public partial class Form1 : Form
     {
         public Form1()
         {
-            InitializeComponent();
+            InitializeComponent();            
         }
 
         public Pool pool { get; private set; }
@@ -41,21 +48,57 @@ namespace WebBruteForcer
         public string hide_lines { get; private set; }
         public bool hide_bytes_checked { get; private set; }
         public string hide_bytes { get; private set; }
+        public string saved_results_filename { get; private set; }
+        public string[] saved_results { get; private set; }
+        public bool saved_results_isJson { get; private set; }
+        public string total_workers { get; private set; }
+        public string sleep_between_requests { get; private set; }
+        public bool hide_text_checked { get; private set; }
+        public string hide_text { get; private set; }
 
         public void do_work(Worker worker)
         {
-            download_url(worker, url_to_bruteforce, post_data_to_send, req_headers_to_send);
+            string action = "download_url";
+
+            if (url_to_bruteforce.StartsWith("dns://"))
+                action = "check_hostname";
+            
+            switch (action)
+            {
+                case "download_url":
+                    download_url(worker, url_to_bruteforce, post_data_to_send, req_headers_to_send);
+                    break;
+                case "check_hostname":
+                    check_hostname(worker);
+                    break;
+            }
+        }
+
+        private void check_hostname(Worker worker)
+        {            
+            string hostname = url_to_bruteforce.Replace("[payload]", worker.payload);
+            hostname = hostname.Replace("dns://", "");
+            try
+            {
+                IPAddress[] addresslist = Dns.GetHostAddresses(hostname);
+                worker.result = Encoding.ASCII.GetBytes("HTTP/1.0 200 OK, Domain Exists" + Environment.NewLine + "Host: " + hostname);
+            }
+            catch (Exception)
+            {
+                worker.result = Encoding.ASCII.GetBytes("HTTP/1.0 404 Not Found" + Environment.NewLine + "Host: " + hostname);
+            }
         }
 
         private WorkerResults analyze_results(Worker worker)
         {
             WorkerResults wr = new WorkerResults(worker);
-            if (worker.result == null || worker.result.Length.Equals(0)) return wr;
+            if (worker.result == null || worker.result.Length.Equals(0)) 
+                return wr;
             string response = Encoding.ASCII.GetString(worker.result);
             string[] lines = response.Split('\n');
             wr.first_line = lines[0].Trim();
             string[] cols = wr.first_line.Split(' ');
-            if (cols.Length < 3)
+            if (cols.Length < 2)
                 throw new Exception("Unknown response " + wr.first_line);
             wr.response_code = cols[1];
             wr.response_code_long = string.Join(" ", cols.Skip(1));
@@ -68,7 +111,8 @@ namespace WebBruteForcer
             if (worker.running || worker.avail || worker.payload == null) return;
             if (worker.error != null)
             {
-                Debug(worker.error.Message+Environment.NewLine+worker.error.StackTrace);
+                // TODO: limit debug memory used before adding new data
+                Debug(worker.error.Message + Environment.NewLine + worker.error.StackTrace);
                 if (break_on_errors == false) return;
                 Console.WriteLine(worker.error.ToString());
                 if (worker.error != null) 
@@ -83,31 +127,35 @@ namespace WebBruteForcer
                 }
                 return;
             }
-            WorkerResults wr = analyze_results(worker);
-            bool silent = wr.response_code != null && wr.response_code.Equals("404") && show404.Equals(false);
-            int lines_count = wr.headers != null ? wr.headers.Count() : 0;
-            int bytes_count = worker.result.Length;
-            List<string> hide_lines_list = this.hide_lines.Split(',').Select(hl => hl.Trim()).ToList();
-            List<string> hide_bytes_list = this.hide_bytes.Split(',').Select(hl => hl.Trim()).ToList();
-            silent = 
-                (this.hide_lines_checked && this.hide_lines != null && hide_lines_list.Any(hl => hl.Equals(lines_count.ToString()))) ||
-                (this.hide_bytes_checked && this.hide_bytes != null && hide_bytes_list.Any(hl => hl.Equals(bytes_count.ToString())))
-                ? true : silent;
-            if (!silent)
+            if (worker.result != null)
             {
-                string headers_debug_line = wr.headers != null ? string.Join(" | ", wr.headers) : "";
-                int max_debug_line_len = 1024 * 10;
-                if (headers_debug_line.Length > max_debug_line_len)
-                    headers_debug_line = headers_debug_line.Substring(0, max_debug_line_len);
-                rtbResults.AppendText(string.Format(
-                    "[ {0,-24} ] {1,-35} [ {2,6} {3,7} ] {4}{5}",
-                        worker.payload,
-                        wr.first_line,
-                        lines_count,
-                        bytes_count,
-                        wr.headers != null ? headers_debug_line : "",
-                        Environment.NewLine));
-                write_to_log(wr);
+                WorkerResults wr = analyze_results(worker);
+                bool silent = wr.response_code != null && wr.response_code.Equals("404") && show404.Equals(false);
+                int lines_count = wr.headers != null ? wr.headers.Count() : 0;
+                int bytes_count = worker.result.Length;
+                List<string> hide_lines_list = this.hide_lines.Split(',').Select(hl => hl.Trim()).ToList();
+                List<string> hide_bytes_list = this.hide_bytes.Split(',').Select(hl => hl.Trim()).ToList();
+                silent =
+                    (this.hide_lines_checked && this.hide_lines != null && hide_lines_list.Any(hl => hl.Equals(lines_count.ToString()))) ||
+                    (this.hide_bytes_checked && this.hide_bytes != null && hide_bytes_list.Any(hl => hl.Equals(bytes_count.ToString()))) ||
+                    (this.hide_text_checked && this.hide_text!=null && Encoding.ASCII.GetString(worker.result).Contains(this.hide_text))
+                    ? true : silent;
+                if (!silent)
+                {
+                    string headers_debug_line = wr.headers != null ? string.Join(" | ", wr.headers) : "";
+                    int max_debug_line_len = 1024 * 10;
+                    if (headers_debug_line.Length > max_debug_line_len)
+                        headers_debug_line = headers_debug_line.Substring(0, max_debug_line_len);
+                    rtbResults.AppendText(string.Format(
+                        "[ {0,-24} ] {1,-35} [ {2,6} {3,7} ] {4}{5}",
+                            worker.payload,
+                            wr.first_line,
+                            lines_count,
+                            bytes_count,
+                            wr.headers != null ? headers_debug_line : "",
+                            Environment.NewLine));
+                    write_to_log(wr);
+                }
             }
             lock (worker)
             {
@@ -132,14 +180,19 @@ namespace WebBruteForcer
 
         private void LoadWorkersPanel()
         {
-            workers_panel = new WorkersPanelControl();
-            splitContainer2.Panel2.Controls.Add(workers_panel);
+            if (workers_panel == null)
+            {
+                workers_panel = new WorkersPanelControl();
+                splitContainer2.Panel2.Controls.Add(workers_panel);
+            }
             ResizeWorkersPanel();
         }
 
         private void ResizeWorkersPanel()
         {
-            splitContainer2.SplitterDistance = Width - workers_panel.getWidth() - 25;            
+            int new_width = Width - workers_panel.getWidth() - 25;
+            if (new_width <= 0) return;
+            splitContainer2.SplitterDistance = new_width;
         }
 
         private void load_dictionary(string filename)
@@ -161,6 +214,16 @@ namespace WebBruteForcer
             pool_count();
             Debug("Dictionary " + Path.GetFileName(filename) + " loaded");
             Debug(string.Join(" ", lines.Take(5)));
+            DebugSleepExtraTime();
+        }
+
+        private void DebugSleepExtraTime()
+        {
+            if (pool == null) return;
+            int sleep_ms = 0;
+            int.TryParse(this.sleep_between_requests, out sleep_ms);
+            if (sleep_ms > 0)
+                Debug(string.Format("{0} extra minutes due to the sleeps", (float)(pool.items.Count() * sleep_ms / 1000.0f / 60.0f)));
         }
 
         private void BruteForcer_State(string state)
@@ -195,8 +258,9 @@ namespace WebBruteForcer
                 if (this.workers.getAll()[0].uri != null)
                     last = " - last: " + this.workers.getAll()[0].uri.AbsoluteUri;
             }
-            Text = string.Format("{0} - WL {1} - Method {2} - Workers {3} - BF {4} {5}",
-                this.title, Path.GetFileName(this.dictionary), this.method, msg, bruteforce_running ? "Running" : "Idle", last);
+            Text = string.Format("{0} - WL {1} - Method {2} - Workers ({6} max. sleep {7}ms) {3} - BF {4} {5}",
+                this.title, Path.GetFileName(this.dictionary), this.method, msg, bruteforce_running ? "Running" : "Idle", last, 
+                this.total_workers,this.sleep_between_requests);
             if (tsLowPanelInfoButton.Text.Equals("PANELINFO"))
             {
                 if (this.method.Equals("POST"))
@@ -216,10 +280,8 @@ namespace WebBruteForcer
             if (this.debug == null)
                 this.debug = new List<string>();
             this.debug.Add(msg);
-            if (inDebug)
-            {
-                refresh_Debug();
-            }
+            string short_msg = msg.Split('\n')[0];
+            tsDebugLabel.Text = "[DEBUG] " + short_msg.Substring(0, Math.Min(short_msg.Length, 100));
         }
 
         private bool update_available_dictionaries()
@@ -260,7 +322,7 @@ namespace WebBruteForcer
                 )
             {
                 bruteforce_running = false;
-                MessageBox.Show("Missing [payload] tag in Url, Headers or Post Data", "BruteForce Urls using " + this.method, MessageBoxButtons.OK, MessageBoxIcon.Information);
+                MessageBox.Show("Missing [payload] tag in Url, Headers or Post Data", "BruteForce Urls using ***" + this.method + "***", MessageBoxButtons.OK, MessageBoxIcon.Information);
                 return;
             }
 
@@ -274,14 +336,21 @@ namespace WebBruteForcer
             if (pool_count().Equals(0))
                 load_dictionary(this.dictionary);
             bruteforce_running = true;
-            BruteForcer_State("Pause Bruteforce");            
-            workers = new Workers(50, workers_panel);
-            Debug("Total workers: " + workers.Count());
+            BruteForcer_State("Pause Bruteforce");
+
+            int ms_sleep = 0;
+            if (this.sleep_between_requests != null)
+                int.TryParse(this.sleep_between_requests, out ms_sleep);
+            int i_total_workers = 50;
+            int.TryParse(this.total_workers, out i_total_workers);
+            workers = new Workers(i_total_workers, workers_panel);
+            Debug("Total workers: " + workers.Count()+" Show 404: "+ show404);
             UpdateTitle();
             WriteConfigToLog();
             Application.DoEvents();
             do
             {
+                List<Worker> workers_to_run = new List<Worker>();
                 do
                 {
                     Worker worker = workers.getAvail();
@@ -290,11 +359,20 @@ namespace WebBruteForcer
                     string item = pool.PopItem();
                     if (item == null)
                         break;
+
                     worker.payload = item;
-                    worker.action = do_work;
-                    worker.Run();
+                    worker.action = do_work;                    
+                    workers_to_run.Add(worker); //worker.Run();
                 } while (true);
-                workers.updateControls();
+                if (workers_to_run.Count > 0)
+                {
+                    foreach (Worker w in workers_to_run)
+                    {
+                        if (ms_sleep > 0.0f) Thread.Sleep(ms_sleep);
+                        w.Run();
+                    }
+                    workers.updateControls();
+                }
                 int pool_remain = pool_count();
 
                 lock (workers)
@@ -347,9 +425,16 @@ namespace WebBruteForcer
         }
         private void download_url(Worker worker, string download_url_template, string post_data_template = null, string req_headers_template = null)
         {
-            Uri uri = new Uri(download_url_template.Replace("[payload]", worker.payload));
+            Uri uri = null;
+            try
+            {
+                uri = new Uri(download_url_template.Replace("[payload]", worker.payload));
+            }catch(Exception)
+            {
+                return;
+            }
             string post_data = post_data_template.Replace("[payload]", worker.payload);
-            string req_headers = req_headers_template.Replace("[payload]", worker.payload);
+            string req_headers = req_headers_template.Replace("[payload]", worker.payload).Trim();
             worker.uri = uri;
 
             List<string> send_headers_list = new List<string>();
@@ -359,10 +444,13 @@ namespace WebBruteForcer
             send_headers_list.Add("Accept: */*");
             if (req_headers != null && req_headers != "")
             {
-                foreach (string header in req_headers.Split('\n').Select(h => h.Trim()))
+                foreach (string header in req_headers.Split('\n'))
                 {
-                    string[] cols = header.Split(':');
-                    send_headers_list = send_headers_list.Where(h => !h.StartsWith(cols[0])).ToList();
+                    if (header.Contains(":"))
+                    {
+                        string[] cols = header.Split(':');
+                        send_headers_list = send_headers_list.Where(h => !h.StartsWith(cols[0])).ToList();
+                    }
                     send_headers_list.Add(header);
                 }
             }
@@ -405,7 +493,7 @@ namespace WebBruteForcer
                 return;
             }
             ServerStream = sslServerStream;
-            ServerStream.ReadTimeout = (int)TimeSpan.FromSeconds(5).TotalMilliseconds;
+            ServerStream.ReadTimeout = (int)TimeSpan.FromSeconds(3).TotalMilliseconds;
             var writer = new StreamWriter(ServerStream, Encoding.ASCII, 8192, true);
 
             writer.WriteLine(string.Join(Environment.NewLine, send_headers));
@@ -423,9 +511,9 @@ namespace WebBruteForcer
                     if (readed.Equals(0))
                         break;
                 }
-                catch (Exception)
+                catch (Exception se)
                 {
-                    break;
+                    worker.error = se;
                 }
                 result = result.Concat(buffer.Take(readed)).ToArray();
                 if (result.Length > max_body_download_limit)
@@ -435,7 +523,9 @@ namespace WebBruteForcer
             {
                 ServerStream.Close();
             }
-            catch (Exception) { }
+            catch (Exception se) {
+                worker.error = se;
+            }
             while (result.Length > 0 && result[0].Equals(0))
                 result = result.Skip(1).ToArray();
             worker.result = result;
@@ -494,6 +584,16 @@ namespace WebBruteForcer
 
         private void write_to_log(WorkerResults wr)
         {
+            string hostname = null;
+            if (wr.worker.uri == null)
+            {
+                hostname = this.url_to_bruteforce;
+                hostname = hostname.Replace("dns://", "");
+            }
+            else
+            {
+                hostname = wr.worker.uri.Host;
+            }
             string headers_debug_line = wr.headers != null ? string.Join(" | ", wr.headers) : "";
             string line = string.Format(
                 "[ {0,-24} ] {1,-35} [ {2,6} {3,7} ] {4}{5}",
@@ -503,7 +603,7 @@ namespace WebBruteForcer
                     wr.headers != null ? string.Join("", wr.headers).Length : 0,
                     wr.headers != null ? headers_debug_line : "",
                     Environment.NewLine);
-            File.AppendAllText(@"logs\" + wr.worker.uri.Host + "-bf_results.txt", line);
+            File.AppendAllText(@"logs\" + hostname + "-bf_results.txt", line);
 
             json_data data = new json_data();
             data.payload = wr.worker.payload;
@@ -511,7 +611,7 @@ namespace WebBruteForcer
             data.first_line = wr.first_line;
             data.result = wr.worker.result;
             string jsonString = JsonConvert.SerializeObject(data);
-            File.AppendAllText(@"logs\" + wr.worker.uri.Host + "-bf_results.json", jsonString + Environment.NewLine);
+            File.AppendAllText(@"logs\" + hostname + "-bf_results.json", jsonString + Environment.NewLine);
         }
 
         public class json_data
@@ -538,6 +638,8 @@ namespace WebBruteForcer
             data.hide_lines_checked = this.hide_lines_checked;
             data.hide_bytes = this.hide_bytes;
             data.hide_bytes_checked = this.hide_bytes_checked;
+            data.hide_text = this.hide_text;
+            data.hide_text_checked = this.hide_text_checked;
             data.break_on_errors= this.break_on_errors;
             data.dictionaries_folder = this.dictionaries_folder;
             data.dictionary = this.dictionary;
@@ -567,6 +669,8 @@ namespace WebBruteForcer
             public string dictionary;
             public string post_data_to_send;
             public string req_headers_to_send;
+            public string hide_text;
+            public bool hide_text_checked;
         }
 
         private void LoadConfig()
@@ -580,10 +684,14 @@ namespace WebBruteForcer
             this.hide_lines = key.GetValue("hide_lines") != null ? (string)key.GetValue("hide_lines") : "";
             this.hide_bytes_checked = key.GetValue("hide_bytes_checked") != null && key.GetValue("hide_bytes_checked").Equals("True");
             this.hide_bytes = key.GetValue("hide_bytes") != null ? (string)key.GetValue("hide_bytes") : "";
+            this.hide_text_checked = key.GetValue("hide_text_checked") != null && key.GetValue("hide_text_checked").Equals("True");
+            this.hide_text = key.GetValue("hide_text") != null ? (string)key.GetValue("hide_text") : "";
             this.dictionaries_folder = (string)key.GetValue("dictionaries_folder");
             this.dictionary = (string)key.GetValue("dictionary");
             this.post_data_to_send = (string)key.GetValue("post_data");
             this.req_headers_to_send = (string)key.GetValue("req_headers");
+            this.total_workers = (string)(key.GetValue("total_workers") != null ? key.GetValue("total_workers") : "50");
+            this.sleep_between_requests = (string)(key.GetValue("sleep_between_requests") != null ? key.GetValue("sleep_between_requests") : "0");
 
             if (this.url_to_bruteforce != null)
                 tsUrlText.Text = this.url_to_bruteforce;
@@ -595,10 +703,17 @@ namespace WebBruteForcer
                 tsHideLinesTextbox.Text = this.hide_lines;
             if (this.hide_bytes != null)
                 tsHideBytesTextbox.Text = this.hide_bytes;
+            if (this.hide_text != null)
+                tsHideTextTextbox.Text = this.hide_text;
+            if (this.total_workers != null)
+                tsTotalWorkersTextbox.Text = this.total_workers;
+            if (this.sleep_between_requests != null)
+                tsSleepBetweenRequestsTextbox.Text = this.sleep_between_requests;
             show404ResponsesToolStripMenuItem.Checked = this.show404;
             breakOnErrorsToolStripMenuItem.Checked = this.break_on_errors;
             hideLinesToolStripMenuItem.Checked = this.hide_lines_checked;
             hideResponsesWithBytesToolStripMenuItem.Checked = this.hide_bytes_checked;
+            hideResponsesWithTextToolStripMenuItem.Checked = this.hide_text_checked;
             SetMethod(this.method);
         }
         private void SaveConfig()
@@ -610,12 +725,16 @@ namespace WebBruteForcer
             if (this.dictionary != null) key.SetValue("dictionary", this.dictionary);
             if (this.hide_lines != null) key.SetValue("hide_lines", this.hide_lines);
             if (this.hide_bytes != null) key.SetValue("hide_bytes", this.hide_bytes);
+            if (this.hide_text != null) key.SetValue("hide_text", this.hide_text);
             if (this.post_data_to_send != null) key.SetValue("post_data", this.post_data_to_send);
             if (this.req_headers_to_send != null) key.SetValue("req_headers", this.req_headers_to_send);
+            if (this.total_workers != null) key.SetValue("total_workers", this.total_workers);
+            if (this.sleep_between_requests != null) key.SetValue("sleep_between_requests", this.sleep_between_requests);
             key.SetValue("show404", this.show404);
             key.SetValue("break_on_errors", this.break_on_errors);
             key.SetValue("hide_lines_checked", this.hide_lines_checked);
             key.SetValue("hide_bytes_checked", this.hide_bytes_checked);
+            key.SetValue("hide_text_checked", this.hide_text_checked);
         }
         private RegistryKey KeyConfig()
         {
@@ -681,6 +800,10 @@ namespace WebBruteForcer
 
         private void refresh_Debug()
         {
+            if(this.debug.Count>1000)
+            {
+                this.debug = this.debug.Skip(this.debug.Count() - 1000).ToList();
+            }
             if (tcPanelInfo.TabPages.Contains(tpDebug).Equals(false))
                 tcPanelInfo.TabPages.Add(tpDebug);
             if (this.debug == null)
@@ -721,7 +844,8 @@ namespace WebBruteForcer
         {
             int new_width = Width - tsUrlLabel.Width - tsPasteButton.Width - tsMethodButton.Width - tsOptionsMenu.Width - tsDictMenu.Width - 50;
             tsUrlText.Width = new_width;
-            ResizeWorkersPanel();
+            //ResizeWorkersPanel();
+            LoadWorkersPanel();
             Application.DoEvents();
         }
 
@@ -797,6 +921,7 @@ namespace WebBruteForcer
         private void tsClearDebugButton_Click(object sender, EventArgs e)
         {
             rtbDebug.Clear();
+            this.debug.Clear();
         }
 
         private void toolStripButton1_Click(object sender, EventArgs e)
@@ -837,6 +962,234 @@ namespace WebBruteForcer
             AboutFrm frm = new AboutFrm();
             frm.SetTitle(this.title);
             frm.ShowDialog();
+        }
+
+        private void tsOpenLog_Click(object sender, EventArgs e)
+        {
+            string url = this.url_to_bruteforce.Replace("dns://", "");
+            string host = url;
+            try
+            {
+                Uri uri = new Uri(url);
+                host = uri.Host;
+            }
+            catch (Exception) { }
+            openFileDialog1.InitialDirectory = Directory.GetCurrentDirectory() + "\\logs";
+            openFileDialog1.FileName = host + "-bf_results.json";
+            if (openFileDialog1.ShowDialog().Equals(DialogResult.OK).Equals(false)) return;
+            LoadBruteforceResults(openFileDialog1.FileName);
+        }
+
+        private void LoadBruteforceResults(string fileName)
+        {
+            if (File.Exists(openFileDialog1.FileName).Equals(false))
+            {
+                MessageBox.Show("File not found", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                return;
+            }
+            saved_results_filename = fileName;
+            saved_results = File.ReadAllLines(fileName);
+            saved_results_isJson = fileName.EndsWith(".json");
+            DoSearch();
+            //ShowResults(saved_results);
+        }
+
+        private void ShowResults(string []lines)
+        {
+            if (lines == null) return;
+            rtbResults.Clear();
+            if (tsExtractText.Text.Equals("*").Equals(false) && tsExtractText.Text.Equals("").Equals(false) && saved_results_isJson)
+            {
+                List<string> output = new List<string>();
+                foreach (string line in lines)
+                {
+                    JObject obj = JsonConvert.DeserializeObject<JObject>(line);
+                    JToken token = obj.GetValue(tsExtractText.Text);
+                    string value = token != null ? token.Value<string>() : "null";
+                    if (uniqueResultsToolStripMenuItem.Checked && output.Contains(value))
+                        continue;
+                    output.Add(value);
+                }
+                rtbResults.AppendText(string.Join(Environment.NewLine, output));
+            }
+            else
+            {
+                rtbResults.Text = string.Join(Environment.NewLine, lines);
+            }
+            rtbResults.AppendText(Environment.NewLine);
+        }
+        private string[] GrepResults(string grep_text, string grep_mode)
+        {
+            if (this.saved_results == null)
+            {
+                MessageBox.Show("Nothing to grep ...", "Grep Results", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return null;
+            }
+            string[] found = this.saved_results;
+            if (!saved_results_isJson)
+            {
+                switch (grep_mode)
+                {
+                    case "Contains ...":
+                        found = found.Where(line => Regex.IsMatch(line, grep_text)).ToArray();
+                        break;
+                    case "Doesn't contain ...":
+                        found = found.Where(line => !Regex.IsMatch(line, grep_text)).ToArray();
+                        break;
+                }
+            }
+            else
+            {
+                bool inverse_search = grep_mode.Equals("Doesn't contain ...");
+                List<string> lines_found = new List<string>();
+                try
+                {
+                    foreach (string line in this.saved_results)
+                    {
+                        JObject obj = JsonConvert.DeserializeObject<JObject>(line);
+                        bool and_match = true;
+                        if (grep_text.Length > 0)
+                        {
+                            string[] args = grep_text.Split(' ');
+                            foreach (string arg in args)
+                            {
+                                string[] cols = arg.Split(':');
+                                JToken token = obj.GetValue(cols[0]);
+                                bool isMatch = Regex.IsMatch(token.Value<string>(), cols[1]);
+                                if (inverse_search) isMatch = !isMatch;
+                                and_match = and_match & isMatch;
+                            }
+                        }
+                        if (and_match) lines_found.Add(line);
+                    }
+                }
+                catch(Exception ex)
+                {
+                    MessageBox.Show(ex.Message, "GrepResults Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                }
+                found = lines_found.ToArray();
+            }
+            return found;
+        }
+
+        private void tsSearchText_KeyPress(object sender, KeyPressEventArgs e)
+        {
+            if (e.KeyChar.Equals('\r'))
+            {
+                DoSearch();
+                e.Handled = true;
+            }
+        }
+
+        private void DoSearch()
+        {
+            string grepMode = "Contains ...";
+            if (doesntContainToolStripMenuItem.Checked) grepMode = "Doesn't contain ...";
+            string[] found = GrepResults(tsSearchText.Text, grepMode);
+            ShowResults(found);
+        }
+
+        private void doesntContainToolStripMenuItem_Click(object sender, EventArgs e)
+        {
+            containsToolStripMenuItem.Checked = false;
+            DoSearch();
+        }
+
+        private void containsToolStripMenuItem_Click(object sender, EventArgs e)
+        {
+            doesntContainToolStripMenuItem.Checked = false;
+            DoSearch();
+        }
+
+        private void tsExtractText_KeyPress(object sender, KeyPressEventArgs e)
+        {
+            if (e.KeyChar.Equals('\r'))
+            {
+                DoSearch();
+                e.Handled = true;
+            }
+        }
+
+        private void uniqueResultsToolStripMenuItem_CheckedChanged(object sender, EventArgs e)
+        {
+            DoSearch();
+        }
+
+        private void tsTotalWorkersTextbox_TextChanged(object sender, EventArgs e)
+        {
+            this.total_workers = tsTotalWorkersTextbox.Text;
+            SaveConfig();
+        }
+
+        private void tsSleepBetweenRequestsTextbox_TextChanged(object sender, EventArgs e)
+        {
+            this.sleep_between_requests = tsSleepBetweenRequestsTextbox.Text;
+            SaveConfig();
+            DebugSleepExtraTime();
+        }
+
+        private void clearResultsToolStripMenuItem1_Click(object sender, EventArgs e)
+        {
+            rtbResults.Clear();
+        }
+
+        private void fastModeToolStripMenuItem_Click(object sender, EventArgs e)
+        {
+            FastMode();
+        }
+        private void FastMode()
+        { 
+            this.total_workers = tsTotalWorkersTextbox.Text = "50";
+            this.sleep_between_requests = tsSleepBetweenRequestsTextbox.Text = "0";
+            UpdateTitle();
+        }
+
+        private void slowModeToolStripMenuItem_Click(object sender, EventArgs e)
+        {
+            SlowMode();
+        }
+        private void SlowMode()
+        { 
+            this.total_workers = tsTotalWorkersTextbox.Text = "1";
+            this.sleep_between_requests = tsSleepBetweenRequestsTextbox.Text = "50";
+            UpdateTitle();
+        }
+
+        private void wordWrapToolStripMenuItem_CheckStateChanged(object sender, EventArgs e)
+        {
+            rtbResults.WordWrap = wordWrapToolStripMenuItem.Checked;
+        }
+
+        private void hideResponsesWithTextToolStripMenuItem_CheckStateChanged(object sender, EventArgs e)
+        {
+            this.hide_text_checked = hideResponsesWithTextToolStripMenuItem.Checked;
+            SaveConfig();
+        }
+
+        private void tsHideTextTextbox_TextChanged(object sender, EventArgs e)
+        {
+            this.hide_text = tsHideTextTextbox.Text;
+            SaveConfig();
+        }
+
+        private void tsDictMenu_MouseDown(object sender, MouseEventArgs e)
+        {
+            update_available_dictionaries();
+        }
+
+        private void tsRefreshDebug_Click(object sender, EventArgs e)
+        {
+            refresh_Debug();
+        }
+
+        private void tsSlowMode_Click(object sender, EventArgs e)
+        {
+            SlowMode();
+        }
+
+        private void tsFastMode_Click(object sender, EventArgs e)
+        {
+            FastMode();
         }
     }
 
@@ -882,12 +1235,15 @@ namespace WebBruteForcer
         {
             this.result = new byte[0];
             this.payload = null;
+            if (this.control == null)
+                return;
             this.control.SetState("cleaned");
         }
 
         internal void Run()
         {
-            this.control.SetState("running");
+            if (this.control != null) 
+                this.control.SetState("running");
             this.thread = new Thread(() =>
             {
                 this.action(this);
@@ -912,7 +1268,7 @@ namespace WebBruteForcer
         {
             this.wpanel = wpanel;
             InitWorkers(max_workers);
-            for (int i = 0; i < workers.Count(); i++)
+            for (int i = 0; i < Math.Min(workers.Count(), wpanel.w_controls.Count()); i++)
             {
                 workers[i].control = wpanel.w_controls[i];
             }
@@ -955,6 +1311,7 @@ namespace WebBruteForcer
             foreach (Worker worker in workers)
             {
                 if (worker.thread == null) continue;
+                if (worker.control == null) continue;
                 worker.control.worker = worker;
                 if (worker.running.Equals(false))
                 {

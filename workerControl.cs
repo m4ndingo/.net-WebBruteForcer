@@ -8,7 +8,7 @@ namespace WebBruteForcer
         ToolTip toolTip = new ToolTip();
         public workerControl()
         {
-            InitializeComponent();
+            InitializeComponent();            
         }
 
         public string state { get; private set; }
